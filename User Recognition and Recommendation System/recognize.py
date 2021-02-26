@@ -61,7 +61,7 @@ def identify_face(image, faceCascade, model):
     print("Found more than one encoding. Most likely, the image has multiple faces")
     return None, None
   elif len(encodings) == 0:
-    print("No encoding match found for the given face.")
+    # print("No encoding match found for the given face.")
     return None, None
 
   names = []
@@ -84,11 +84,11 @@ def identify_face(image, faceCascade, model):
     # update the list of names
     names.append(name)
     if len(names) > 1:
-      print("Found more than one match for facial encoding")
+      # print("Found more than one match for facial encoding")
       return None, None
 
   else:
-    print("No encoding matches found. Possibly a new face")
+    # print("No encoding matches found. Possibly a new face")
     return None, None
   if len(names) == 0:
     return None
@@ -133,7 +133,7 @@ def validate_model(model_name, testing_dataset="face_data/testing"):
     print()
 
 
-def make_prediction(model_name, image):
+def make_prediction_image(model_name, image):
   # find path of xml file containing haarcascade file
   cascPathface = os.path.dirname(
       cv2.__file__) + "/data/haarcascade_frontalface_alt2.xml"
@@ -146,3 +146,35 @@ def make_prediction(model_name, image):
   pred_name, pred_image = identify_face(image, faceCascade, data)
   print(f"Identified face: {pred_name}")
   return pred_name
+
+
+def make_prediction(model_name, display=False):
+  # find path of xml file containing haarcascade file
+  cascPathface = os.path.dirname(
+      cv2.__file__) + "/data/haarcascade_frontalface_alt2.xml"
+  # load the harcaascade in the cascade classifier
+  faceCascade = cv2.CascadeClassifier(cascPathface)
+  # load the known faces and embeddings saved earlier
+  data = pickle.loads(open(model_name, "rb").read())
+
+  try:
+    print("Streaming started")
+    video_capture = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    # loop over frames from the video file stream
+    while True:
+      pred_name, pred_image = None, None
+      # grab the frame from the threaded video stream
+      ret, frame = video_capture.read()
+      pred_name, pred_image = identify_face(frame, faceCascade, data)
+      if pred_name is not None:
+        print(f"Identified face: {pred_name}")
+        video_capture.release()
+        cv2.destroyAllWindows()
+        return pred_name
+      if display:
+        cv2.imshow('frame', frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+          break
+  finally:
+    video_capture.release()
+    cv2.destroyAllWindows()

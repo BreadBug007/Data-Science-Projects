@@ -1,21 +1,24 @@
 import json
-import pandas as pd
-import random
-import configparser
-from tqdm import tqdm
-
-import requests
-import mysql.connector
-import gensim
 from gensim.models import Word2Vec
 
 import warnings
 warnings.filterwarnings('ignore')
 
 
+def get_config(config_file='config.ini'):
+  import configparser
+  config = configparser.ConfigParser()
+  config.read(config_file)
+  return config
+
+
 def train_model(model_name="word2vec.model",
                 sales_data="sales_data/OnlineRetail.csv",
                 products_json="products.json"):
+  import pandas as pd
+  import random
+  from tqdm import tqdm
+
   '''
     reading data
   '''
@@ -108,7 +111,7 @@ def get_recommendations(stock_code,
                         n=6,
                         model_name='word2vec.model',
                         products_json='products.json'):
-  model = gensim.models.Word2Vec.load(model_name)
+  model = Word2Vec.load(model_name)
   with open(products_json, 'r') as f:
     products_dict = json.load(f)
 
@@ -124,21 +127,20 @@ def get_recommendations(stock_code,
   return new_ms
 
 
-def connect_to_database(db_config='db_config.ini'):
-  config = configparser.ConfigParser()
-  config.read(db_config)
+def connect_to_database(config_file):
+  import mysql.connector
   mydb = mysql.connector.connect(
-      host=config['mysql']['host'],
-      port=config['mysql']['port'],
-      user=config['mysql']['user'],
-      passwd=config['mysql']['pass'],
-      database=config['mysql']['db'],
+      host=config_file['mysql']['host'],
+      port=config_file['mysql']['port'],
+      user=config_file['mysql']['user'],
+      passwd=config_file['mysql']['pass'],
+      database=config_file['mysql']['db'],
   )
   return mydb
 
 
-def retrieve_products_mysql(user_name):
-  mydb = connect_to_database()
+def retrieve_products_mysql(user_name, config_file):
+  mydb = connect_to_database(config_file)
   mycursor = mydb.cursor()
   query = f"SELECT product FROM `sales` WHERE user = '{user_name}' LIMIT 10"
   mycursor.execute(query)
@@ -150,11 +152,11 @@ def retrieve_products_mysql(user_name):
   return products
 
 
-def retrieve_products_firebase(user_name, db_config='db_config.ini'):
-  config = configparser.ConfigParser()
-  config.read(db_config)
-  project = config['firebase']['project']
-  table = config['firebase']['table']
+def retrieve_products_firebase(user_name, config_file):
+  import requests
+
+  project = config_file['firebase']['project']
+  table = config_file['firebase']['table']
   url = f"https://{project}.firebaseio.com/{table}.json"
   resp = requests.get(url)
   json_data = resp.json()
@@ -165,14 +167,74 @@ def retrieve_products_firebase(user_name, db_config='db_config.ini'):
   return products
 
 
-def recommend_products(user_name, n=3):
-  # product_codes = retrieve_products_mysql(user_name)
-  product_codes = retrieve_products_firebase(user_name)
+def email_alert(msg_text, config_file):
+  import smtplib
+  from email.mime.multipart import MIMEMultipart
+  from email.mime.text import MIMEText
+  from datetime import datetime
+
+  username = config_file['email']['sender_user']
+  password = config_file['email']['sender_pass']
+  # If you want to always cc to a mail for testing, add that email below
+  recepient_addrs = []
+  recepient_addrs.append(config_file['email']['recipient'])
+  file_list = []
+
+  def send_mail(send_from: str, subject: str, html: str,
+                send_to: list, files=None):
+
+    send_to = send_to
+
+    msg = MIMEMultipart('alternative')
+    msg['From'] = send_from
+    msg['To'] = ', '.join(send_to)
+    msg['Subject'] = subject
+
+    msg.attach(MIMEText(html, 'html'))
+
+    smtp = smtplib.SMTP(host="smtp.gmail.com", port=587)
+    smtp.starttls()
+    smtp.login(username, password)
+    smtp.sendmail(send_from, send_to, msg.as_string())
+    smtp.close()
+
+  send_mail(send_from=username,
+            subject="Product Recommendations",
+            html="""\
+              <html>
+                <head></head>
+                <body>
+                  <h3>Top product recommendations (%s)</h3>
+                  <ol>%s</ol>
+                </body>
+              </html>
+            """ % (datetime.today().strftime('%Y-%m-%d'),
+                   msg_text.replace("\n", "<br>")),
+            send_to=recepient_addrs,
+            files=file_list
+            )
+
+
+def recommend_products(user_name, n=5):
+  # get configuration defined in config.ini file
+  config_file = get_config()
+
+  # get data from mysql or firebase
+  # product_codes = retrieve_products_mysql(user_name, config_file)
+  product_codes = retrieve_products_firebase(user_name, config_file)
+
+  # get recommendations
   all_recommendations = []
   for product_code in product_codes:
     recommendations = get_recommendations(product_code)
     all_recommendations.extend(recommendations)
   all_recommendations.sort(key=lambda x: x[1], reverse=True)
+  recommendation_text = ""
   print(f"Top {n} recommendations are:")
   for i in all_recommendations[:n]:
     print(f"\"{i[0]}\" with a similarity score of {i[1]}")
+    recommendation_text += f"<li>{i[0]}</li>"
+
+  # send an email with the recommendations
+  print("\nSending an email with the recommendations...")
+  email_alert(recommendation_text, config_file)
